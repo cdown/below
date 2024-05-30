@@ -767,7 +767,7 @@ fn real_main(init: init::InitToken) {
                         init,
                         logger,
                         errs,
-                        Duration::from_secs(*interval_s as u64),
+                        Duration::from_millis(10),
                         below_config,
                         retain_for_s.map(|r| Duration::from_secs(r as u64)),
                         *store_size_limit,
@@ -1095,7 +1095,13 @@ fn record(
         },
     );
 
+    let mut iters = 0;
+
     loop {
+        if iters == 10 {
+            bail!("done");
+        }
+        iters += 1;
         if !disable_exitstats {
             // Anything that comes over the error channel is an error
             match errs.try_recv() {
@@ -1164,14 +1170,6 @@ fn record(
 
         stats.report_store_size(below_config.store_dir.as_path());
 
-        let collect_duration = Instant::now().duration_since(collect_instant);
-        // Sleep for at least 1s to avoid sample collision
-        let sleep_duration = if interval > collect_duration {
-            std::cmp::max(Duration::from_secs(1), interval - collect_duration)
-        } else {
-            Duration::from_secs(1)
-        };
-        std::thread::sleep(sleep_duration);
     }
 }
 

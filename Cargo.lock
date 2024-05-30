@@ -327,13 +327,12 @@ dependencies = [
 
 [[package]]
 name = "below-tc"
-version = "0.0.1"
+version = "0.8.1"
 dependencies = [
  "netlink-packet-core",
  "netlink-packet-route",
- "netlink-packet-utils",
  "netlink-sys",
- "nix 0.27.1",
+ "nix 0.25.0",
  "serde",
  "thiserror",
 ]
@@ -456,6 +455,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
 name = "cgroupfs"
 version = "0.8.1"
 dependencies = [
@@ -507,9 +512,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.5.1"
+version = "4.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "885e4d7d5af40bfb99ae6f9433e292feac98d452dcb3ec3d25dfe7552b77da8c"
+checksum = "dd79504325bf38b10165b02e89b4347300f855f273c4cb30c4a3209e6583275e"
 dependencies = [
  "clap",
 ]
@@ -598,7 +603,7 @@ dependencies = [
  "autocfg",
  "cfg-if",
  "crossbeam-utils",
- "memoffset 0.6.5",
+ "memoffset",
  "scopeguard",
 ]
 
@@ -1229,15 +1234,14 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libbpf-cargo"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d230f1634d0ef9f5708bcf644c3644c357ee324649c3001d50ef4250fb3af9df"
+checksum = "7a601f00ddb9297129c28f8c4352bad3260815eeefeff0d51b0bddf285ba6d31"
 dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
  "libbpf-rs",
- "libbpf-sys",
  "memmap2",
  "num_enum",
  "regex",
@@ -1251,9 +1255,9 @@ dependencies = [
 
 [[package]]
 name = "libbpf-rs"
-version = "0.23.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e289c054443e63d3f09d4ee53044c4311166f3df31b7835a29995a6c3b03c18d"
+checksum = "6e73ada3ef6be035e396cccd3e117ed0ecc168b74f05e6ab87ace97dc7fba689"
 dependencies = [
  "bitflags 2.4.0",
  "libbpf-sys",
@@ -1266,13 +1270,12 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.4.0+v1.4.0"
+version = "1.4.2+v1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ee5f6d35341ad5d492fd92466c45ff11d6e8104ffa8208f62450875c93e258"
+checksum = "800bccc21b216764f96334a241a072b842121843bf679f5a03b0c2c21cb339ed"
 dependencies = [
  "cc",
- "nix 0.27.1",
- "num_cpus",
+ "nix 0.28.0",
  "pkg-config",
 ]
 
@@ -1356,15 +1359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memoffset"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1443,20 +1437,20 @@ dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
  "libc",
- "memoffset 0.6.5",
+ "memoffset",
  "pin-utils",
 ]
 
 [[package]]
 name = "nix"
-version = "0.27.1"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
 dependencies = [
  "bitflags 2.4.0",
  "cfg-if",
+ "cfg_aliases",
  "libc",
- "memoffset 0.9.1",
 ]
 
 [[package]]
