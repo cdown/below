@@ -23,9 +23,11 @@ use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::channel;
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use lazy_static::lazy_static;
 use nix::sys;
@@ -718,20 +720,41 @@ impl ProcReader {
         path: P,
     ) -> Result<Option<Vec<String>>> {
         let path = path.as_ref().to_owned();
-        let (tx, rx) = channel();
+        let result_ptr = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(None))));
+        let is_done = Arc::new(AtomicBool::new(false));
+        let thread_result_ptr = Arc::clone(&result_ptr);
+        let thread_is_done = Arc::clone(&is_done);
+
         self.threadpool.execute(move || {
-            // This is OK to ignore. cmdline receiver hanging up is expected
-            // after timeout.
-            let _ = tx.send(Self::read_pid_cmdline_from_path_blocking(path));
+            let result = Self::read_pid_cmdline_from_path_blocking(&path);
+            let boxed_result = Box::new(Some(result));
+            thread_result_ptr.store(Box::into_raw(boxed_result), Ordering::Release);
+            thread_is_done.store(true, Ordering::Release);
         });
 
-        // 20ms should be more than enough for an in-memory procfs read and also high enough for a
-        // page fault
-        match rx.recv_timeout(Duration::from_millis(20)) {
-            Ok(c) => c,
-            Err(RecvTimeoutError::Timeout) => Ok(None),
-            Err(RecvTimeoutError::Disconnected) => panic!("cmdline sender hung up"),
+        let start_time = Instant::now();
+
+        // We should definitely be done in the nominal case reading in 20us...
+        thread::sleep(Duration::from_micros(20));
+
+        // ...otherwise 20ms should be enough. It should be nowhere near that high, so busyloop.
+        while !is_done.load(Ordering::Acquire) {
+            if start_time.elapsed() >= Duration::from_millis(20) {
+                return Ok(None);
+            }
+            thread::sleep(Duration::from_millis(1));
         }
+
+        let result_ptr = result_ptr.load(Ordering::Acquire);
+        // SAFETY:
+        // The use of `Box::from_raw` here is sound because the `result_ptr` was initialised with a
+        // valid pointer created by `Box::into_raw(Box::new(None))`, and we wait for the worker
+        // thread to complete by checking the `is_done` flag before dereferencing the pointer.
+        // Thus, when we dereference `result_ptr` after confirming that the thread has finished its
+        // work, we are guaranteed that it points to a valid value. If the worker times out, we
+        // will not consume the result_ptr, so it's still free to write to it later.
+        let mut result_box = unsafe { Box::from_raw(result_ptr) };
+        result_box.take().unwrap()
     }
 
     fn read_pid_exe_path_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<String> {
