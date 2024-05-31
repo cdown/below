@@ -672,17 +672,10 @@ impl ProcReader {
             // Lines contain three colon separated fields:
             //   hierarchy-ID:controller-list:cgroup-path
             // A line starting with "0::" would be an entry for cgroup v2.
-            // Otherwise, the line containing "pids" controller is what we want
-            // for cgroup v1.
             let parts: Vec<_> = line.splitn(3, ':').collect();
-            if parts.len() == 3 {
-                if parts[0] == "0" && parts[1] == "" {
-                    cgroup_path = Some(parts[2].to_owned());
-                    // cgroup v2 takes precedence
-                    break;
-                } else if parts[1].split(',').any(|c| c == "pids") {
-                    cgroup_path = Some(parts[2].to_owned());
-                }
+            if parts.len() == 3 && parts[0] == "0" && parts[1].is_empty() {
+                cgroup_path = Some(parts[2].to_owned());
+                break;
             }
         }
         cgroup_path.ok_or_else(|| Error::InvalidFileFormat(path.to_path_buf()))
