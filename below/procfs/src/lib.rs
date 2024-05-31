@@ -667,18 +667,20 @@ impl ProcReader {
         let path = path.as_ref().join("cgroup");
         let content = self.read_file_to_string(&path)?;
 
-        let mut cgroup_path = None;
         for line in content.lines() {
             // Lines contain three colon separated fields:
             //   hierarchy-ID:controller-list:cgroup-path
             // A line starting with "0::" would be an entry for cgroup v2.
-            let parts: Vec<_> = line.splitn(3, ':').collect();
-            if parts.len() == 3 && parts[0] == "0" && parts[1].is_empty() {
-                cgroup_path = Some(parts[2].to_owned());
-                break;
+            let mut parts = line.splitn(3, ':');
+            if let (Some(hierarchy_id), Some(controller_list), Some(cgroup_path)) =
+                (parts.next(), parts.next(), parts.next())
+            {
+                if hierarchy_id == "0" && controller_list.is_empty() {
+                    return Ok(cgroup_path.to_owned());
+                }
             }
         }
-        cgroup_path.ok_or_else(|| Error::InvalidFileFormat(path.to_path_buf()))
+        Err(Error::InvalidFileFormat(path.to_path_buf()))
     }
 
     pub fn read_pid_cgroup(&mut self, pid: u32) -> Result<String> {
