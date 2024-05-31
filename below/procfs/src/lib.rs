@@ -167,12 +167,10 @@ impl ProcReader {
         reader
     }
 
-    fn read_file_to_string(&mut self, path: &Path) -> Result<String> {
+    fn read_file_to_string(&mut self, path: &Path) -> Result<&str> {
         let mut file = File::open(path).map_err(|e| Error::IoError(path.to_path_buf(), e))?;
-        let size = file
-            .read(&mut self.buffer)
-            .map_err(|e| Error::IoError(path.to_path_buf(), e))?;
-        Ok(String::from_utf8_lossy(&self.buffer[..size]).to_string())
+        let size = file.read(&mut self.buffer).map_err(|e| Error::IoError(path.to_path_buf(), e))?;
+        std::str::from_utf8(&self.buffer[..size]).map_err(|_| Error::InvalidFileFormat(path.to_path_buf()))
     }
 
     fn read_uptime_secs(&mut self) -> Result<u64> {
@@ -433,7 +431,7 @@ impl ProcReader {
         // mount of each mount source. The first mount is what shows in
         // the 'df' command and reflects the usage of the device.
         let path = self.path.join("self/mountinfo");
-        let content = self.read_file_to_string(&path)?;
+        let content = self.read_file_to_string(&path)?.to_string();
         let mut mount_info_map: HashMap<String, MountInfo> = HashMap::new();
 
         for line in content.lines() {
@@ -476,7 +474,7 @@ impl ProcReader {
 
     pub fn read_disk_stats_and_fsinfo(&mut self) -> Result<DiskMap> {
         let path = self.path.join("diskstats");
-        let content = self.read_file_to_string(&path)?;
+        let content = self.read_file_to_string(&path)?.to_string();
         let mut disk_map: DiskMap = Default::default();
         let mount_info_map = self.read_mount_info_map().unwrap_or_default();
 
@@ -534,7 +532,7 @@ impl ProcReader {
         let content = self.read_file_to_string(&path)?;
         let mut pidstat: PidStat = Default::default();
 
-        let mut line = content.clone();
+        let mut line = content.to_string();
         {
             let b_opt = line.find('(');
             let e_opt = line.rfind(')');
