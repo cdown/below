@@ -77,6 +77,7 @@ pub struct SingleProcessModel {
     pub cpu: Option<ProcessCpuModel>,
     pub cmdline: Option<String>,
     pub exe_path: Option<String>,
+    pub user: Option<String>,
 }
 
 impl SingleProcessModel {
@@ -106,6 +107,7 @@ impl SingleProcessModel {
                 Some("?".into())
             },
             exe_path: sample.exe_path.clone(),
+            user: sample.status.user.clone(),
         }
     }
 
@@ -126,6 +128,7 @@ impl SingleProcessModel {
             cpu: fold_optionals!(&left.cpu, &right.cpu, ProcessCpuModel::fold),
             cmdline: None,
             exe_path: None,
+            user: None,
         }
     }
 }

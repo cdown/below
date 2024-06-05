@@ -389,6 +389,7 @@ pub struct PidStatus {
     pub pte: Option<u64>,
     pub swap: Option<u64>,
     pub huge_tlb: Option<u64>,
+    pub user: Option<String>,
 }
 
 #[derive(Default, Clone, PartialEq, Debug, Serialize, Deserialize)]

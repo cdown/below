@@ -914,6 +914,7 @@ impl HasRenderConfig for model::SingleProcessModel {
         match field_id {
             Pid => rc.title("Pid"),
             Ppid => rc.title("Ppid"),
+            User => rc.title("User"),
             NsTgid => rc.title("NStgid").width(12),
             Comm => rc.title("Comm").width(30),
             State => rc.title("State"),
@@ -969,6 +970,8 @@ impl HasRenderConfigForDump for model::SingleProcessModel {
             Pid => None,
             // Not sure what to do about static values like ppid. Omitting for now.
             Ppid => None,
+            // Same as ppid
+            User => None,
             // Same as ppid
             NsTgid => None,
             // OpenMetrics does not support strings

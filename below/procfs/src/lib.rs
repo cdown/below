@@ -15,6 +15,7 @@
 #![deny(clippy::all)]
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -29,7 +30,9 @@ use std::time::Duration;
 
 use lazy_static::lazy_static;
 use libc::clock_gettime;
+use libc::getpwuid;
 use libc::timespec;
+use libc::uid_t;
 use libc::CLOCK_BOOTTIME;
 use nix::sys;
 use openat::Dir;
@@ -154,6 +157,7 @@ pub struct ProcReader {
     path: PathBuf,
     threadpool: ThreadPool,
     buffer: Vec<u8>,
+    user_cache: HashMap<uid_t, Option<String>>,
 }
 
 impl ProcReader {
@@ -165,6 +169,7 @@ impl ProcReader {
             // 5 threads max
             threadpool: ThreadPool::with_name("procreader_worker".to_string(), 5),
             buffer: Vec::with_capacity(Self::BUFFER_CHUNK_SIZE),
+            user_cache: HashMap::new(),
         }
     }
 
@@ -625,9 +630,29 @@ impl ProcReader {
         self.read_pid_stat_from_path(p)
     }
 
+    fn uid_to_username(&mut self, uid: uid_t) -> Option<String> {
+        if let Some(cached_username) = self.user_cache.get(&uid) {
+            return cached_username.clone();
+        }
+
+        let username = unsafe {
+            let pw = getpwuid(uid);
+            if pw.is_null() {
+                None
+            } else {
+                let username_cstr = CStr::from_ptr((*pw).pw_name);
+                username_cstr.to_str().map(str::to_string).ok()
+            }
+        }
+        .unwrap_or(uid.to_string());
+
+        self.user_cache.insert(uid, Some(username.clone()));
+        Some(username)
+    }
+
     fn read_pid_status_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<PidStatus> {
         let path = path.as_ref().join("status");
-        let content = self.read_file_to_str(&path)?;
+        let content = self.read_file_to_str(&path)?.to_string();
         let mut pidstatus: PidStatus = Default::default();
 
         for line in content.lines() {
@@ -635,6 +660,12 @@ impl ProcReader {
             if let Some(item) = items.next() {
                 let mut values = items.flat_map(|s| s.split_whitespace());
                 match item {
+                    "Uid" => {
+                        pidstatus.user = values
+                            .next()
+                            .and_then(|value| value.parse().ok())
+                            .and_then(|uid| self.uid_to_username(uid));
+                    }
                     "NStgid" => {
                         pidstatus.ns_tgid = Some(values.filter_map(|s| s.parse().ok()).collect());
                     }

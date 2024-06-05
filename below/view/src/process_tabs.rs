@@ -169,6 +169,7 @@ pub mod default_tabs {
     use model::SingleProcessModelFieldId::Ppid;
     use model::SingleProcessModelFieldId::State;
     use model::SingleProcessModelFieldId::UptimeSecs;
+    use model::SingleProcessModelFieldId::User;
     use once_cell::sync::Lazy;
 
     use super::*;
@@ -181,6 +182,7 @@ pub mod default_tabs {
         ProcessTab::new(vec![
             ViewItem::from_default(Pid),
             ViewItem::from_default(Ppid),
+            ViewItem::from_default(User),
             ViewItem::from_default(NsTgid),
             ViewItem::from_default(State),
             ViewItem::from_default(Cpu(UsagePct)),
