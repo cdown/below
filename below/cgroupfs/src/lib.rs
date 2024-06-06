@@ -13,9 +13,12 @@
 // limitations under the License.
 
 #![deny(clippy::all)]
+use std::cell::RefCell;
+use std::cell::RefMut;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::ErrorKind;
@@ -57,6 +60,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct CgroupReader {
     relative_path: PathBuf,
     dir: Dir,
+    buffer: RefCell<Vec<u8>>,
 }
 
 fn parse_integer_or_max(s: &str) -> std::result::Result<i64, String> {
@@ -230,6 +234,35 @@ impl CgroupReader {
         CgroupReader::new_with_relative_path_inner(root, relative_path, true)
     }
 
+    fn read_file_to_str(
+        &self,
+        file_name: impl AsRef<Path>,
+        file: &File,
+    ) -> Result<RefMut<'_, str>> {
+        let mut buffer = self.buffer.borrow_mut();
+        let read = procfs::read_kern_file(&mut buffer, file);
+
+        match read {
+            Ok(sz) => {
+                RefMut::filter_map(buffer, |vec| std::str::from_utf8_mut(&mut vec[..sz]).ok())
+                    .map_err(|_| {
+                        let path = file_name.as_ref().to_path_buf();
+                        self.io_error(
+                            path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Invalid UTF-8 in input",
+                            ),
+                        )
+                    })
+            }
+            Err(e) => {
+                let path = file_name.as_ref().to_path_buf();
+                Err(self.io_error(path, e))
+            }
+        }
+    }
+
     fn new_with_relative_path_inner(
         root: PathBuf,
         relative_path: PathBuf,
@@ -259,7 +292,11 @@ impl CgroupReader {
             }
         }
 
-        Ok(CgroupReader { relative_path, dir })
+        Ok(CgroupReader {
+            relative_path,
+            dir,
+            buffer: RefCell::new(Vec::new()),
+        })
     }
 
     pub fn root() -> Result<CgroupReader> {
@@ -287,14 +324,12 @@ impl CgroupReader {
             .dir
             .open_file(file_name)
             .map_err(|e| self.io_error(file_name, e))?;
-        let buf_reader = BufReader::new(file);
-        let line = buf_reader
-            .lines()
-            .next()
-            .unwrap_or_else(|| Ok("".to_owned()));
-        let line = line.map_err(|e| self.io_error(file_name, e))?;
-        line.parse::<T>()
-            .map_err(move |_| self.unexpected_line(file_name, line))
+        let content = self.read_file_to_str(file_name, &file)?;
+        let line = content.lines().next().unwrap_or("");
+        let line_str = line.to_string();
+        line_str
+            .parse::<T>()
+            .map_err(|_| self.unexpected_line(file_name, line_str))
     }
 
     /// Read a value from a file that has a single line. If the file is empty,
@@ -304,12 +339,12 @@ impl CgroupReader {
             .dir
             .open_file(file_name)
             .map_err(|e| self.io_error(file_name, e))?;
-        let buf_reader = BufReader::new(file);
-        if let Some(line) = buf_reader.lines().next() {
-            let line = line.map_err(|e| self.io_error(file_name, e))?;
-            return line
+        let content = self.read_file_to_str(file_name, &file)?;
+        if let Some(line) = content.lines().next() {
+            let line_str = line.to_string();
+            return line_str
                 .parse::<T>()
-                .map_err(move |_| self.unexpected_line(file_name, line));
+                .map_err(|_| self.unexpected_line(file_name, line_str));
         }
         Err(self.invalid_file_format(file_name))
     }
@@ -588,7 +623,11 @@ impl CgroupReader {
                     };
                     let mut relative_path = self.relative_path.clone();
                     relative_path.push(entry.file_name());
-                    Some(CgroupReader { relative_path, dir })
+                    Some(CgroupReader {
+                        relative_path,
+                        dir,
+                        buffer: RefCell::new(Vec::new()),
+                    })
                 }
                 _ => None,
             }))
