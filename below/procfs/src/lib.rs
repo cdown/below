@@ -81,7 +81,7 @@ fn page_size() -> u64 {
     }
 }
 
-pub fn read_kern_file_to_str<R: Read>(buffer: &mut Vec<u8>, mut reader: R) -> io::Result<&str> {
+pub fn read_kern_file<R: Read>(buffer: &mut Vec<u8>, mut reader: R) -> io::Result<usize> {
     const BUFFER_CHUNK_SIZE: usize = 1 << 16;
     let mut total_read = 0;
 
@@ -106,6 +106,12 @@ pub fn read_kern_file_to_str<R: Read>(buffer: &mut Vec<u8>, mut reader: R) -> io
             Err(e) => return Err(e),
         }
     }
+
+    Ok(total_read)
+}
+
+pub fn read_kern_file_to_str<R: Read>(buffer: &mut Vec<u8>, reader: R) -> io::Result<&str> {
+    let total_read = read_kern_file(buffer, reader)?;
 
     std::str::from_utf8(&buffer[..total_read])
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))
