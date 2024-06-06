@@ -202,7 +202,7 @@ fn collect_sample(
 
     Ok(Sample {
         cgroup: collect_cgroup_sample(
-            &cgroupfs::CgroupReader::new(options.cgroup_root.to_owned())?,
+            &mut cgroupfs::CgroupReader::new(options.cgroup_root.to_owned())?,
             options.collect_io_stat,
             logger,
             &options.cgroup_re,
@@ -385,60 +385,65 @@ fn pressure_wrap<S: Sized>(
 }
 
 fn collect_cgroup_sample(
-    reader: &cgroupfs::CgroupReader,
+    reader: &mut cgroupfs::CgroupReader,
     collect_io_stat: bool,
     logger: &slog::Logger,
     cgroup_re: &Option<Regex>,
 ) -> Result<CgroupSample> {
-    let io_stat = if collect_io_stat {
-        io_stat_wrap(reader.read_io_stat())?
-    } else {
-        None
-    };
+    // We need to pull this out because we cannot have an immutable borrow here and a mutable
+    // borrow intermingled
+    let children_iter =
+        wrap(reader.child_cgroup_iter()).context("Failed to get iterator over cgroup children")?;
+
+    // We transpose at the end here to convert the Option<Result<BTreeMap... into
+    // Result<Option<BTreeMap and then bail any errors with `?` - leaving us with the
+    // Option<BTreeMap...
+    //
+    // The only case this can be None is if the cgroup no longer exists - this is consistent with
+    // the above members
+    let children = children_iter
+        .map(|child_iter| {
+            child_iter
+                .filter(|child| {
+                    if let Some(cgroup_re) = cgroup_re.as_ref() {
+                        !cgroup_re.is_match(&child.name().to_string_lossy())
+                    } else {
+                        true
+                    }
+                })
+                .map(|mut child| {
+                    collect_cgroup_sample(&mut child, collect_io_stat, logger, cgroup_re).map(
+                        |child_sample| {
+                            (
+                                child
+                                    .name()
+                                    .file_name()
+                                    .expect("Unexpected .. in cgroup path")
+                                    .to_string_lossy()
+                                    .to_string(),
+                                child_sample,
+                            )
+                        },
+                    )
+                })
+                .collect::<Result<BTreeMap<String, CgroupSample>>>()
+        })
+        .transpose()?;
+
+    // Now that we're done with the immutable children borrows, proceed with the mutable borrows
     Ok(CgroupSample {
         cpu_stat: wrap(reader.read_cpu_stat())?.map(Into::into),
-        io_stat,
+        io_stat: if collect_io_stat {
+            io_stat_wrap(reader.read_io_stat())?
+        } else {
+            None
+        },
         tids_current: wrap(reader.read_pids_current())?,
         tids_max: wrap(reader.read_pids_max())?,
         memory_current: wrap(reader.read_memory_current().map(|v| v as i64))?,
         memory_stat: wrap(reader.read_memory_stat())?.map(Into::into),
         pressure: pressure_wrap(reader.read_pressure())?.map(Into::into),
-        // We transpose at the end here to convert the
-        // Option<Result<BTreeMap... into Result<Option<BTreeMap and
-        // then bail any errors with `?` - leaving us with the
-        // Option<BTreeMap...
-        //
-        // The only case this can be None is if the cgroup no longer
-        // exists - this is consistent with the above members
-        children: wrap(reader.child_cgroup_iter())
-            .context("Failed to get iterator over cgroup children")?
-            .map(|child_iter| {
-                child_iter
-                    .filter(|child| {
-                        if let Some(cgroup_re) = cgroup_re.as_ref() {
-                            !cgroup_re.is_match(&child.name().to_string_lossy())
-                        } else {
-                            true
-                        }
-                    })
-                    .map(|child| {
-                        collect_cgroup_sample(&child, collect_io_stat, logger, cgroup_re).map(
-                            |child_sample| {
-                                (
-                                    child
-                                        .name()
-                                        .file_name()
-                                        .expect("Unexpected .. in cgroup path")
-                                        .to_string_lossy()
-                                        .to_string(),
-                                    child_sample,
-                                )
-                            },
-                        )
-                    })
-                    .collect::<Result<BTreeMap<String, CgroupSample>>>()
-            })
-            .transpose()?,
+        children,
         memory_swap_current: wrap(reader.read_memory_swap_current().map(|v| v as i64))?,
         memory_zswap_current: None, // Use the one from memory.stat
         memory_min: wrap(reader.read_memory_min())?,

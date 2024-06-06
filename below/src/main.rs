@@ -1169,7 +1169,6 @@ fn record(
         cleanup_store(&store, &logger, /* store_size_limit */ None, retention)?;
 
         stats.report_store_size(below_config.store_dir.as_path());
-
     }
 }
 
