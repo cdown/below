@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::ErrorKind;
@@ -57,6 +58,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct CgroupReader {
     relative_path: PathBuf,
     dir: Dir,
+    buffer: Vec<u8>,
 }
 
 fn parse_integer_or_max(s: &str) -> std::result::Result<i64, String> {
@@ -230,6 +232,25 @@ impl CgroupReader {
         CgroupReader::new_with_relative_path_inner(root, relative_path, true)
     }
 
+    fn read_file_to_str(&mut self, file_name: impl AsRef<Path>, file: &File) -> Result<&str> {
+        // Not read_kern_file_to_str due to overlapping borrows from self.io_error()
+        let read = procfs::read_kern_file(&mut self.buffer, file);
+
+        match read {
+            Ok(sz) => std::str::from_utf8(&self.buffer[..sz]).map_err(|e| {
+                let path = file_name.as_ref().to_path_buf();
+                self.io_error(
+                    path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+                )
+            }),
+            Err(e) => {
+                let path = file_name.as_ref().to_path_buf();
+                Err(self.io_error(path, e))
+            }
+        }
+    }
+
     fn new_with_relative_path_inner(
         root: PathBuf,
         relative_path: PathBuf,
@@ -259,7 +280,11 @@ impl CgroupReader {
             }
         }
 
-        Ok(CgroupReader { relative_path, dir })
+        Ok(CgroupReader {
+            relative_path,
+            dir,
+            buffer: Vec::new(),
+        })
     }
 
     pub fn root() -> Result<CgroupReader> {
@@ -282,41 +307,39 @@ impl CgroupReader {
 
     /// Read a value from a file that has a single line. If the file is empty,
     /// the value will be derived from an empty string.
-    fn read_empty_or_singleline_file<T: FromStr>(&self, file_name: &str) -> Result<T> {
+    fn read_empty_or_singleline_file<T: FromStr>(&mut self, file_name: &str) -> Result<T> {
         let file = self
             .dir
             .open_file(file_name)
             .map_err(|e| self.io_error(file_name, e))?;
-        let buf_reader = BufReader::new(file);
-        let line = buf_reader
-            .lines()
-            .next()
-            .unwrap_or_else(|| Ok("".to_owned()));
-        let line = line.map_err(|e| self.io_error(file_name, e))?;
-        line.parse::<T>()
-            .map_err(move |_| self.unexpected_line(file_name, line))
+        let content = self.read_file_to_str(file_name, &file)?;
+        let line = content.lines().next().unwrap_or("");
+        let line_str = line.to_string();
+        line_str
+            .parse::<T>()
+            .map_err(|_| self.unexpected_line(file_name, line_str))
     }
 
     /// Read a value from a file that has a single line. If the file is empty,
     /// InvalidFileFormat is returned.
-    fn read_singleline_file<T: FromStr>(&self, file_name: &str) -> Result<T> {
+    fn read_singleline_file<T: FromStr>(&mut self, file_name: &str) -> Result<T> {
         let file = self
             .dir
             .open_file(file_name)
             .map_err(|e| self.io_error(file_name, e))?;
-        let buf_reader = BufReader::new(file);
-        if let Some(line) = buf_reader.lines().next() {
-            let line = line.map_err(|e| self.io_error(file_name, e))?;
-            return line
+        let content = self.read_file_to_str(file_name, &file)?;
+        if let Some(line) = content.lines().next() {
+            let line_str = line.to_string();
+            return line_str
                 .parse::<T>()
-                .map_err(move |_| self.unexpected_line(file_name, line));
+                .map_err(|_| self.unexpected_line(file_name, line_str));
         }
         Err(self.invalid_file_format(file_name))
     }
 
     /// Read a stat from a file that has a single non-negative integer or "max"
     /// line. Will return -1 if the context is "max".
-    fn read_singleline_integer_or_max_stat_file(&self, file_name: &str) -> Result<i64> {
+    fn read_singleline_integer_or_max_stat_file(&mut self, file_name: &str) -> Result<i64> {
         match self.read_singleline_file::<u64>(file_name) {
             Ok(v) => Ok(v as i64),
             Err(Error::UnexpectedLine(_, line)) if line.starts_with("max") => Ok(-1),
@@ -326,7 +349,7 @@ impl CgroupReader {
 
     /// Read a single line from a file representing a space separated list of
     /// cgroup controllers.
-    fn read_singleline_controllers(&self, file_name: &str) -> Result<BTreeSet<String>> {
+    fn read_singleline_controllers(&mut self, file_name: &str) -> Result<BTreeSet<String>> {
         let s = self.read_empty_or_singleline_file::<String>(file_name)?;
         if s.is_empty() {
             return Ok(BTreeSet::new());
@@ -335,76 +358,76 @@ impl CgroupReader {
     }
 
     /// Read cgroup.controllers
-    pub fn read_cgroup_controllers(&self) -> Result<BTreeSet<String>> {
+    pub fn read_cgroup_controllers(&mut self) -> Result<BTreeSet<String>> {
         self.read_singleline_controllers("cgroup.controllers")
     }
 
     /// Read cgroup.subtree_control
-    pub fn read_cgroup_subtree_control(&self) -> Result<BTreeSet<String>> {
+    pub fn read_cgroup_subtree_control(&mut self) -> Result<BTreeSet<String>> {
         self.read_singleline_controllers("cgroup.subtree_control")
     }
 
     /// Read pids.current - returning current cgroup number of processes
-    pub fn read_pids_current(&self) -> Result<u64> {
+    pub fn read_pids_current(&mut self) -> Result<u64> {
         self.read_singleline_file("pids.current")
     }
 
     /// Read pids.max - returning max cgroup number of processes
-    pub fn read_pids_max(&self) -> Result<i64> {
+    pub fn read_pids_max(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("pids.max")
     }
 
     /// Read memory.min - returning memory.min limit in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_min(&self) -> Result<i64> {
+    pub fn read_memory_min(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.min")
     }
 
     /// Read memory.low - returning memory.low limit in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_low(&self) -> Result<i64> {
+    pub fn read_memory_low(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.low")
     }
 
     /// Read memory.high - returning memory.high limit in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_high(&self) -> Result<i64> {
+    pub fn read_memory_high(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.high")
     }
 
     /// Read memory.max - returning memory.max max in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_max(&self) -> Result<i64> {
+    pub fn read_memory_max(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.max")
     }
 
     /// Read memory.swap.max - returning memory.swap.max max in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_swap_max(&self) -> Result<i64> {
+    pub fn read_memory_swap_max(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.swap.max")
     }
 
     /// Read memory.zswap.max - returning memory.zswap.max max in bytes
     /// Will return -1 if the content is max
-    pub fn read_memory_zswap_max(&self) -> Result<i64> {
+    pub fn read_memory_zswap_max(&mut self) -> Result<i64> {
         self.read_singleline_integer_or_max_stat_file("memory.zswap.max")
     }
 
     /// Read memory.current - returning current cgroup memory
     /// consumption in bytes
-    pub fn read_memory_current(&self) -> Result<u64> {
+    pub fn read_memory_current(&mut self) -> Result<u64> {
         self.read_singleline_file("memory.current")
     }
 
     /// Read memory.swap.current - returning current cgroup memory
     /// swap consumption in bytes
-    pub fn read_memory_swap_current(&self) -> Result<u64> {
+    pub fn read_memory_swap_current(&mut self) -> Result<u64> {
         self.read_singleline_file("memory.swap.current")
     }
 
     /// Read memory.zswap.current - returning current cgroup memory
     /// zswap consumption in bytes
-    pub fn read_memory_zswap_current(&self) -> Result<u64> {
+    pub fn read_memory_zswap_current(&mut self) -> Result<u64> {
         self.read_singleline_file("memory.zswap.current")
     }
 
@@ -437,37 +460,37 @@ impl CgroupReader {
     }
 
     /// Read cpu.weight
-    pub fn read_cpu_weight(&self) -> Result<u32> {
+    pub fn read_cpu_weight(&mut self) -> Result<u32> {
         self.read_singleline_file::<u32>("cpu.weight")
     }
 
     /// Read cpu.max
-    pub fn read_cpu_max(&self) -> Result<CpuMax> {
+    pub fn read_cpu_max(&mut self) -> Result<CpuMax> {
         self.read_singleline_file::<CpuMax>("cpu.max")
     }
 
     /// Read cpuset.cpus
-    pub fn read_cpuset_cpus(&self) -> Result<Cpuset> {
+    pub fn read_cpuset_cpus(&mut self) -> Result<Cpuset> {
         self.read_empty_or_singleline_file("cpuset.cpus")
     }
 
     /// Read cpuset.cpus.effective
-    pub fn read_cpuset_cpus_effective(&self) -> Result<Cpuset> {
+    pub fn read_cpuset_cpus_effective(&mut self) -> Result<Cpuset> {
         self.read_empty_or_singleline_file("cpuset.cpus.effective")
     }
 
     /// Read cpuset.cpus.partition
-    pub fn read_cpuset_cpus_partition(&self) -> Result<String> {
+    pub fn read_cpuset_cpus_partition(&mut self) -> Result<String> {
         self.read_singleline_file("cpuset.cpus.partition")
     }
 
     /// Read cpuset.mems
-    pub fn read_cpuset_mems(&self) -> Result<MemNodes> {
+    pub fn read_cpuset_mems(&mut self) -> Result<MemNodes> {
         self.read_empty_or_singleline_file("cpuset.mems")
     }
 
     /// Read cpuset.mems.effective
-    pub fn read_cpuset_mems_effective(&self) -> Result<MemNodes> {
+    pub fn read_cpuset_mems_effective(&mut self) -> Result<MemNodes> {
         self.read_empty_or_singleline_file("cpuset.mems.effective")
     }
 
@@ -588,7 +611,11 @@ impl CgroupReader {
                     };
                     let mut relative_path = self.relative_path.clone();
                     relative_path.push(entry.file_name());
-                    Some(CgroupReader { relative_path, dir })
+                    Some(CgroupReader {
+                        relative_path,
+                        dir,
+                        buffer: Vec::new(),
+                    })
                 }
                 _ => None,
             }))
