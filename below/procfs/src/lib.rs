@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::ErrorKind;
@@ -78,6 +79,36 @@ fn page_size() -> u64 {
         -1 => panic!("Failed to query clock tick rate"),
         x => x as u64,
     }
+}
+
+pub fn read_kern_file_to_str<R: Read>(buffer: &mut Vec<u8>, mut reader: R) -> io::Result<&str> {
+    const BUFFER_CHUNK_SIZE: usize = 1 << 16;
+    let mut total_read = 0;
+
+    loop {
+        // Not .capacity() + .reserve(), since we need it initialised for the slice
+        if buffer.len() < total_read + BUFFER_CHUNK_SIZE {
+            buffer.resize(buffer.len() + BUFFER_CHUNK_SIZE, 0);
+        }
+
+        // We don't use .read_to_end() because of perverse heuristics that interact poorly with
+        // procfs/kernfs
+        match reader.read(&mut buffer[total_read..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                total_read += n;
+                // procfs/kernfs don't do partial reads, so we're done if we didn't saturate
+                if n < BUFFER_CHUNK_SIZE {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    std::str::from_utf8(&buffer[..total_read])
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid UTF-8 sequence"))
 }
 
 #[derive(Error, Debug)]
@@ -158,14 +189,12 @@ pub struct ProcReader {
 }
 
 impl ProcReader {
-    const BUFFER_CHUNK_SIZE: usize = 1 << 16;
-
     pub fn new() -> ProcReader {
         ProcReader {
             path: Path::new("/proc").to_path_buf(),
             // 5 threads max
             threadpool: ThreadPool::with_name("procreader_worker".to_string(), 5),
-            buffer: Vec::with_capacity(Self::BUFFER_CHUNK_SIZE),
+            buffer: Vec::new(),
         }
     }
 
@@ -176,34 +205,9 @@ impl ProcReader {
     }
 
     fn read_file_to_str(&mut self, path: &Path) -> Result<&str> {
-        let mut file = File::open(path).map_err(|e| Error::IoError(path.to_path_buf(), e))?;
-        let mut total_read = 0;
-
-        loop {
-            // Not .reserve(), since we need it initialised for the slice
-            if self.buffer.len() < total_read + Self::BUFFER_CHUNK_SIZE {
-                self.buffer
-                    .resize(self.buffer.len() + Self::BUFFER_CHUNK_SIZE, 0);
-            }
-
-            // We don't use .read_to_end() because of perverse heuristics that interact poorly with
-            // procfs
-            match file.read(&mut self.buffer[total_read..]) {
-                Ok(0) => break,
-                Ok(n) => {
-                    total_read += n;
-                    // procfs doesn't do partial reads, so we're done if we didn't saturate
-                    if n < Self::BUFFER_CHUNK_SIZE {
-                        break;
-                    }
-                }
-                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(Error::IoError(path.to_path_buf(), e)),
-            }
-        }
-
-        std::str::from_utf8(&self.buffer[..total_read])
-            .map_err(|_| Error::InvalidFileFormat(path.to_path_buf()))
+        let file = File::open(path).map_err(|e| Error::IoError(path.to_path_buf(), e))?;
+        read_kern_file_to_str(&mut self.buffer, file)
+            .map_err(|e| Error::IoError(path.to_path_buf(), e))
     }
 
     fn read_uptime_secs(&mut self) -> Result<u64> {
